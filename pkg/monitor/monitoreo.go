@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -9,10 +10,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"danich/pkg/scraper"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Assignment struct {
@@ -64,6 +68,30 @@ type ModifiedAssignment struct {
 	New Assignment `json:"new"`
 }
 
+// Config structs para YAML
+type PackingConfig struct {
+	Name    string `yaml:"name"`
+	URL     string `yaml:"url"`
+	Sorters int    `yaml:"sorters"`
+	Lineas  int    `yaml:"lineas"`
+	Fruta   string `yaml:"fruta"`
+}
+
+type MonitorConfig struct {
+	IntervaloSegundos int  `yaml:"intervalo_segundos"`
+	CaptureCharts     bool `yaml:"capture_charts"`
+}
+
+type DataConfig struct {
+	Folder string `yaml:"folder"`
+}
+
+type Config struct {
+	Packing PackingConfig `yaml:"packing"`
+	Monitor MonitorConfig `yaml:"monitor"`
+	Data    DataConfig    `yaml:"data"`
+}
+
 var (
 	baseURL        = "http://192.168.121.2"
 	assignmentsURL = baseURL + "/api/api/assignments_list"
@@ -83,8 +111,56 @@ var (
 	chartScraper *scraper.ChartScraper
 )
 
+// loadConfig carga la configuración desde config.yaml y actualiza las variables globales
+func loadConfig() {
+	data, err := os.ReadFile("config.yaml")
+	if err != nil {
+		log.Printf("⚠️  No se pudo cargar config.yaml, usando valores por defecto: %v\n", err)
+		return
+	}
+
+	var config Config
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		log.Printf("⚠️  Error parseando config.yaml, usando valores por defecto: %v\n", err)
+		return
+	}
+
+	// Actualizar variables globales con valores del YAML
+	if config.Packing.URL != "" {
+		baseURL = config.Packing.URL
+		assignmentsURL = baseURL + "/api/api/assignments_list"
+	}
+
+	if config.Monitor.IntervaloSegundos > 0 {
+		checkInterval = time.Duration(config.Monitor.IntervaloSegundos) * time.Second
+	}
+
+	captureCharts = config.Monitor.CaptureCharts
+
+	if config.Data.Folder != "" {
+		datasetFolder = config.Data.Folder
+		// Actualizar rutas de archivos con el nuevo folder
+		currentSnapshotFile = filepath.Join(datasetFolder, "current_snapshot.json")
+		datasetFile = filepath.Join(datasetFolder, "dataset.json")
+		changesLogFile = filepath.Join(datasetFolder, "changes_log.json")
+	}
+
+	fmt.Printf("✓ Configuración cargada: %s (%s) - %d sorters, %d líneas\n", 
+		config.Packing.Name, config.Packing.Fruta, config.Packing.Sorters, config.Packing.Lineas)
+}
+
 // Run inicia el monitor de asignaciones
 func Run() {
+	// Cargar configuración desde YAML
+	loadConfig()
+
+	fmt.Println("=== Monitor de Asignaciones - Recolección de Datos ===")
+	fmt.Printf("URL: %s\n", assignmentsURL)
+	fmt.Printf("Intervalo de verificación: %v\n", checkInterval)
+	fmt.Printf("Carpeta de datos: %s\n", datasetFolder)
+	fmt.Printf("Captura de gráficos: %v\n", captureCharts)
+	fmt.Println("Presiona Ctrl+C para detener")
+	fmt.Println(repeat("=", 60))
 	fmt.Println("=== Monitor de Asignaciones - Recolección de Datos ===")
 	fmt.Printf("URL: %s\n", assignmentsURL)
 	fmt.Printf("Intervalo de verificación: %v\n", checkInterval)
@@ -176,6 +252,15 @@ func Run() {
 
 		// Guardar dataset actualizado
 		saveDataset(dataset)
+
+		// Exportar a CSV si hay datos de gráficos
+		if len(snapshot.ChartData) > 0 {
+			if err := exportToCSV(snapshot); err != nil {
+				log.Printf("⚠️  Error exportando a CSV: %v\n", err)
+			} else {
+				fmt.Println("✓ Datos exportados a training_data.csv")
+			}
+		}
 
 		// Mostrar estadísticas
 		displayStats(snapshot, dataset, startTime)
@@ -574,6 +659,124 @@ func logChange(change ChangeLog) {
 	// Mantener todos los cambios (no limitar)
 	data, _ := json.MarshalIndent(logs, "", "  ")
 	ioutil.WriteFile(changesLogFile, data, 0644)
+}
+
+// getSalidasForSKU obtiene las líneas (salidas) asignadas a un SKU en formato "L1 L2 L3"
+func getSalidasForSKU(assignments []Assignment, sorterID int, sku string) string {
+	var salidas []int
+	
+	// Normalizar SKU para comparación (convertir a mayúsculas)
+	skuNorm := strings.ToUpper(sku)
+	
+	for _, a := range assignments {
+		if a.SorterID == sorterID && strings.ToUpper(a.SKU) == skuNorm {
+			salidas = append(salidas, a.Salida)
+		}
+	}
+	
+	// Ordenar salidas
+	sort.Ints(salidas)
+	
+	// Convertir a formato "L1 L2 L3"
+	var parts []string
+	for _, s := range salidas {
+		parts = append(parts, fmt.Sprintf("L%d", s))
+	}
+	
+	return strings.Join(parts, " ")
+}
+
+// exportToCSV exporta los datos a formato CSV para entrenamiento de ML
+func exportToCSV(snapshot DataSnapshot) error {
+	csvFile := filepath.Join(datasetFolder, "training_data.csv")
+	
+	// Verificar si el archivo existe para decidir si escribir headers
+	fileExists := false
+	if _, err := os.Stat(csvFile); err == nil {
+		fileExists = true
+	}
+	
+	// Abrir archivo en modo append
+	file, err := os.OpenFile(csvFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("error abriendo archivo CSV: %v", err)
+	}
+	defer file.Close()
+	
+	writer := csv.NewWriter(file)
+	writer.Comma = ';' // Usar punto y coma para compatibilidad con Excel en español
+	defer writer.Flush()
+	
+	// Escribir headers solo si el archivo es nuevo
+	if !fileExists {
+		headers := []string{
+			"timestamp",
+			"sorter_id",
+			"sku",
+			"calibre",
+			"calidad",
+			"variedad",
+			"lineas",
+			"porcentaje",
+			"total_skus_activos",
+		}
+		if err := writer.Write(headers); err != nil {
+			return fmt.Errorf("error escribiendo headers: %v", err)
+		}
+	}
+	
+	// Procesar cada sorter con datos de gráfico
+	for sorterID, chartData := range snapshot.ChartData {
+		if chartData == nil {
+			continue
+		}
+		
+		// Obtener assignments de este sorter
+		var sorterAssignments []Assignment
+		for _, a := range snapshot.Assignments {
+			if a.SorterID == sorterID {
+				sorterAssignments = append(sorterAssignments, a)
+			}
+		}
+		
+		// Para cada SKU con porcentaje
+		for sku, percentage := range chartData.Percentages {
+			// Parsear SKU para extraer calibre, calidad, variedad
+			// Formato típico: "4J-D-SANTINA-C5WFTFG"
+			parts := strings.Split(sku, "-")
+			calibre := ""
+			calidad := ""
+			variedad := ""
+			
+			if len(parts) >= 3 {
+				calibre = parts[0]   // "4J"
+				calidad = parts[1]   // "D"
+				variedad = parts[2]  // "SANTINA"
+			}
+			
+			// Obtener líneas de selladora para este SKU
+			lineas := getSalidasForSKU(sorterAssignments, sorterID, sku)
+			
+			// Crear registro CSV
+			record := []string{
+				snapshot.Timestamp,
+				fmt.Sprintf("%d", sorterID),
+				sku,
+				calibre,
+				calidad,
+				variedad,
+				lineas,
+				fmt.Sprintf("%.1f", percentage),
+				fmt.Sprintf("%d", chartData.TotalSKUs),
+			}
+			
+			if err := writer.Write(record); err != nil {
+				return fmt.Errorf("error escribiendo registro: %v", err)
+			}
+		}
+	}
+	
+	return nil
 }
 
 func repeat(s string, count int) string {

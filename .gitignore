@@ -1,0 +1,48 @@
+# Binarios compilados
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Archivos de datos de entrenamiento
+training_data/*.json
+training_data/*.csv
+training_data/snapshots_*.json
+
+# Archivos de estado
+last_assignments.json
+
+# Variables de entorno
+.env
+
+# Configuración local (mantener los .example)
+config.yaml
+# Mantener en repo:
+# config.example.yaml
+
+# Documentación de flujo (no incluir en repo)
+FLUJO_DATOS.md
+
+# Go
+*.test
+*.out
+go.work
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporales
+tmp/
+temp/
