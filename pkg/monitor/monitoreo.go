@@ -638,6 +638,18 @@ func displayStats(snapshot DataSnapshot, dataset TrainingDataset, startTime time
 			}
 		}
 	}
+	
+	if len(snapshot.ChartData) == 2 {
+	advice, err := advisor.GetAdvice(snapshot)
+	if err == nil && advice.Accion == "mover" {
+		fmt.Println("\n🤖:")
+		fmt.Printf(" Mueve el %s del Sorter %d al Sorter %d en las líneas %s\n", 
+			advice.SKU, advice.DeSorter, advice.ASorter, advice.LineasSugeridas)
+		fmt.Printf("   → %s\n", advice.Razon)
+		fmt.Printf("   → %s\n", advice.BalanceEsperado)
+		fmt.Println()
+	}
+}
 
 	fmt.Println(repeat("-", 60))
 }
