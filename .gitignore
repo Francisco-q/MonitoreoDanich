@@ -46,3 +46,6 @@ Thumbs.db
 # Temporales
 tmp/
 temp/
+
+# Entorno virtual
+venv/
