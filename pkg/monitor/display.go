@@ -27,7 +27,7 @@ func (d *Display) ShowStats(snapshot DataSnapshot, dataset TrainingDataset, star
 	fmt.Printf("  • Total snapshots: %d\n", dataset.TotalSnapshots)
 	fmt.Printf("  • Tiempo de ejecución: %v\n", duration.Round(time.Second))
 	fmt.Printf("  • Assignments actuales: %d\n", snapshot.TotalCount)
-	
+
 	d.showSorterStats(snapshot)
 	d.showSalidaStats(snapshot)
 	d.showGlobalDistribution(snapshot)

@@ -46,7 +46,7 @@ type SystemConfig struct {
 	ChangesLogFile      string
 	LastAssignmentsFile string
 	TrainingDataCSV     string
-	
+
 	// Info del packing
 	PackingName    string
 	PackingSorters int
@@ -84,17 +84,17 @@ func LoadConfig() (*SystemConfig, error) {
 	if yamlConfig.Packing.URL != "" {
 		cfg.BaseURL = yamlConfig.Packing.URL
 	}
-	
+
 	if yamlConfig.Monitor.IntervaloSegundos > 0 {
 		cfg.CheckInterval = time.Duration(yamlConfig.Monitor.IntervaloSegundos) * time.Second
 	}
-	
+
 	cfg.CaptureCharts = yamlConfig.Monitor.CaptureCharts
-	
+
 	if yamlConfig.Data.Folder != "" {
 		cfg.DatasetFolder = yamlConfig.Data.Folder
 	}
-	
+
 	// Info del packing
 	cfg.PackingName = yamlConfig.Packing.Name
 	cfg.PackingSorters = yamlConfig.Packing.Sorters

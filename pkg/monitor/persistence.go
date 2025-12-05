@@ -124,6 +124,6 @@ func (p *Persistence) LogChange(change ChangeLog) error {
 	if err != nil {
 		return err
 	}
-	
+
 	return ioutil.WriteFile(p.config.ChangesLogFile, data, 0644)
 }

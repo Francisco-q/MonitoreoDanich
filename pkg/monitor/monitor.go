@@ -3,8 +3,10 @@ package monitor
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"danich/pkg/advisor"
 	"danich/pkg/scraper"
 )
 
@@ -18,6 +20,7 @@ type Monitor struct {
 	exporter        *Exporter
 	display         *Display
 	chartScraper    *scraper.ChartScraper
+	nativeAdvisor   *advisor.Advisor
 }
 
 // New crea un nuevo monitor con todas sus dependencias
@@ -46,6 +49,11 @@ func New() (*Monitor, error) {
 	} else {
 		m.snapshotBuilder = NewSnapshotBuilder(nil)
 	}
+
+	// Inicializar advisor nativo
+	advisorConfig := advisor.DefaultConfig()
+	m.nativeAdvisor = advisor.NewAdvisor(advisorConfig)
+	fmt.Println("✓ Advisor nativo inicializado")
 
 	return m, nil
 }
@@ -129,6 +137,11 @@ func (m *Monitor) runCycle(checkCount int, dataset *TrainingDataset, lastAssignm
 	// 7. Mostrar estadísticas
 	m.display.ShowStats(snapshot, *dataset, startTime)
 
+	// 8. Analizar balance y generar sugerencias
+	if checkCount%10 == 0 && len(snapshot.ChartData) >= 2 { // Cada 5 minutos
+		m.generateAdvice(snapshot, checkCount)
+	}
+
 	return nil
 }
 
@@ -162,6 +175,164 @@ func (m *Monitor) handleChanges(timestamp string, hasChanged bool, old, new []As
 
 	return m.persistence.SaveLastAssignments(new)
 }
+
+// generateAdvice genera sugerencias usando el advisor nativo
+func (m *Monitor) generateAdvice(snapshot DataSnapshot, checkCount int) {
+	fmt.Printf("\n🤖 ANÁLISIS DE BALANCE (Verificación #%d)\n", checkCount)
+	fmt.Println("═" + strings.Repeat("═", 48))
+
+	// Convertir snapshot a formato del advisor nativo
+	state := m.convertToAdvisorState(snapshot)
+
+	// Obtener advice del advisor nativo
+	advice, err := m.nativeAdvisor.GetAdvice(state)
+	if err != nil {
+		fmt.Printf("⚠️ Error obteniendo sugerencia: %v\n", err)
+		return
+	}
+
+	// Mostrar sugerencia
+	m.displayAdvice(advice)
+}
+
+// convertToAdvisorState convierte DataSnapshot a advisor.SystemState
+func (m *Monitor) convertToAdvisorState(snapshot DataSnapshot) advisor.SystemState {
+	state := advisor.SystemState{
+		Timestamp: snapshot.DateTime,
+		Sorter1:   advisor.SorterData{SKUs: make(map[string]advisor.SKUInfo)},
+		Sorter2:   advisor.SorterData{SKUs: make(map[string]advisor.SKUInfo)},
+	}
+
+	// Convertir datos del Sorter 1
+	if chartData, exists := snapshot.ChartData[1]; exists {
+		for sku, percentage := range chartData.Percentages {
+			if percentage > 0 {
+				lines := m.getLinesForSKU(snapshot.Assignments, 1, sku)
+				state.Sorter1.SKUs[sku] = advisor.SKUInfo{
+					Percentage: percentage,
+					Lines:      lines,
+				}
+			}
+		}
+	}
+
+	// Convertir datos del Sorter 2
+	if chartData, exists := snapshot.ChartData[2]; exists {
+		for sku, percentage := range chartData.Percentages {
+			if percentage > 0 {
+				lines := m.getLinesForSKU(snapshot.Assignments, 2, sku)
+				state.Sorter2.SKUs[sku] = advisor.SKUInfo{
+					Percentage: percentage,
+					Lines:      lines,
+				}
+			}
+		}
+	}
+
+	return state
+}
+
+// getLinesForSKU obtiene las líneas asignadas a un SKU en un sorter
+func (m *Monitor) getLinesForSKU(assignments []Assignment, sorterID int, sku string) []int {
+	var lines []int
+	skuUpper := strings.ToUpper(sku)
+
+	for _, assignment := range assignments {
+		if assignment.SorterID == sorterID && strings.ToUpper(assignment.SKU) == skuUpper {
+			// Evitar duplicados
+			found := false
+			for _, line := range lines {
+				if line == assignment.Salida {
+					found = true
+					break
+				}
+			}
+			if !found {
+				lines = append(lines, assignment.Salida)
+			}
+		}
+	}
+
+	return lines
+}
+
+// displayAdvice muestra la sugerencia del advisor de forma visual
+func (m *Monitor) displayAdvice(advice *advisor.Advice) {
+	switch advice.Accion {
+	case "mantener":
+		fmt.Printf("✅ %s\n", advice.Razon)
+
+	case "mover":
+		fmt.Printf("💡 SUGERENCIA DE OPTIMIZACIÓN\n")
+		fmt.Println("═" + strings.Repeat("═", 48))
+		fmt.Printf("SKU: %s\n", advice.SKU)
+		fmt.Printf("Movimiento: Sorter %d → Sorter %d\n", advice.DeSorter, advice.ASorter)
+		fmt.Printf("📋 Razón: %s\n", advice.Razon)
+		fmt.Printf("🕐 Timestamp: %s\n", advice.Timestamp)
+		fmt.Println("═" + strings.Repeat("═", 48))
+
+	default:
+		fmt.Printf("ℹ️  %s\n", advice.Razon)
+	}
+}
+
+// analyzeBalance analiza el balance y genera sugerencias
+// analyzeBalance - función deshabilitada temporalmente
+/*
+func (m *Monitor) analyzeBalance(snapshot DataSnapshot) *advisor.BalanceAdvice {
+	// Construir request para el advisor
+	request := advisor.AnalysisRequest{
+		Sorter1: make(map[string]advisor.SKUData),
+		Sorter2: make(map[string]advisor.SKUData),
+	}
+
+	// Extraer datos de cada sorter
+	for sorterID, chartData := range snapshot.ChartData {
+		// Obtener líneas de cada SKU desde assignments
+		// Normalizar SKUs a mayúsculas para matching consistente
+		skuLines := make(map[string][]int)
+		for _, assignment := range snapshot.Assignments {
+			if assignment.SorterID == sorterID {
+				normalizedSKU := strings.ToUpper(assignment.SKU)
+				skuLines[normalizedSKU] = append(skuLines[normalizedSKU], assignment.Salida)
+			}
+		}
+
+		log.Printf("📊 Sorter %d: %d SKUs en gráfico, %d assignments con líneas",
+			sorterID, len(chartData.Percentages), len(skuLines))
+
+		// Construir mapa de SKUData
+		for sku, percentage := range chartData.Percentages {
+			normalizedSKU := strings.ToUpper(sku)
+			lines := skuLines[normalizedSKU]
+			if lines == nil {
+				lines = []int{}
+				log.Printf("   ⚠️  SKU %s tiene %.1f%% pero sin líneas asignadas", sku, percentage)
+			}
+
+			skuData := advisor.SKUData{
+				Percentage: percentage,
+				Lines:      lines,
+			}
+
+			if sorterID == 1 {
+				request.Sorter1[sku] = skuData
+			} else {
+				request.Sorter2[sku] = skuData
+			}
+		}
+	}
+
+	// Llamar al advisor
+	advice, err := m.advisorClient.Analyze(request)
+	if err != nil {
+		log.Printf("⚠️  Error obteniendo sugerencia: %v\n", err)
+		return nil
+	}
+
+	return advice
+}
+*/
 
 // printHeader muestra el header del monitor
 func (m *Monitor) printHeader() {

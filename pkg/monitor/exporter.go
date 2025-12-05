@@ -96,8 +96,8 @@ func (e *Exporter) createCSVRecord(snapshot DataSnapshot, sorterID int, sku stri
 	variedad := ""
 
 	if len(parts) >= 3 {
-		calibre = parts[0] // "4J"
-		calidad = parts[1] // "D"
+		calibre = parts[0]  // "4J"
+		calidad = parts[1]  // "D"
 		variedad = parts[2] // "SANTINA"
 	}
 

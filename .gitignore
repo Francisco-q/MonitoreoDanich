@@ -6,12 +6,13 @@ bin/
 *.dylib
 
 # Archivos de datos de entrenamiento
-training_data/*.json
-training_data/*.csv
-training_data/snapshots_*.json
+training_data/
+*.json
+*.csv
 
 # Archivos de estado
 last_assignments.json
+current_snapshot.json
 
 # Variables de entorno
 .env
@@ -47,5 +48,16 @@ Thumbs.db
 tmp/
 temp/
 
-# Entorno virtual
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pkl
 venv/
+.pytest_cache/
+
+# Modelos ML (muy grandes)
+training_data/*.pkl
+
+# Archivos temporales de test
+/tmp/
